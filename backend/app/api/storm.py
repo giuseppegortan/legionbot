@@ -107,9 +107,30 @@ async def end_storm(session_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Session not found")
     
     messages = db_session.messages
-    summary = "Successfull Storm Orchestration Summary." # This would come from Secretary
     
-    zip_buffer = generate_blueprint_zip(session_id, summary, messages)
+    # Try to find a detailed analysis from Secretary
+    analysis = None
+    for m in reversed(messages):
+        if m.get('sender') == "Secretary" or m.get('role') == 'assistant':
+            if len(m.get('content', '')) > 300: # Heuristic for a detailed analysis
+                analysis = m['content']
+                break
+    
+    if not analysis:
+        # Fallback: Ask Gemini to generate a complete application specification for the README
+        from backend.app.agents.base_agents import call_gemini
+        system_prompt = """You are a Senior Systems Architect. 
+        Analyze the transition log and generate a COMPREHENSIVE Application Analysis and Technical Specification.
+        Include:
+        1. Project Overview & Core Objectives
+        2. Detailed Feature Specification
+        3. Proposed Technical Stack
+        4. Architecture & Data Flow
+        5. Implementation Roadmap
+        Format everything in clean Markdown for a README.md file."""
+        analysis = await call_gemini(system_prompt, messages)
+
+    zip_buffer = generate_blueprint_zip(session_id, analysis, messages)
     save_zip_to_disk(zip_buffer, session_id)
     
     return {
