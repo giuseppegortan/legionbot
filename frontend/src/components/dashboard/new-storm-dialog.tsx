@@ -32,7 +32,9 @@ export function NewStormDialog({ onCreate }: NewStormDialogProps) {
 
     const handleCreate = () => {
         if (!name.trim()) return
-        onCreate(name, selectedAgents)
+        // Map selected IDs to full names
+        const agents = selectedAgents.map(id => AVAILABLE_AGENTS.find(a => a.id === id)?.name || id)
+        onCreate(name, agents)
         setOpen(false)
         setName("")
     }
@@ -71,8 +73,8 @@ export function NewStormDialog({ onCreate }: NewStormDialogProps) {
                                     key={agent.id}
                                     onClick={() => toggleAgent(agent.id)}
                                     className={`flex flex-col items-start p-3 rounded-xl border transition-all text-left ${selectedAgents.includes(agent.id)
-                                            ? "bg-zinc-100 border-zinc-100 text-zinc-900"
-                                            : "bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700"
+                                        ? "bg-zinc-100 border-zinc-100 text-zinc-900"
+                                        : "bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700"
                                         }`}
                                 >
                                     <span className="text-sm font-semibold">{agent.name}</span>

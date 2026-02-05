@@ -21,7 +21,9 @@ interface DeleteStormDialogProps {
 export function DeleteStormDialog({ stormName, onDelete }: DeleteStormDialogProps) {
     const [open, setOpen] = useState(false)
 
-    const handleDelete = () => {
+    const handleDelete = (e: React.MouseEvent) => {
+        e.preventDefault()
+        e.stopPropagation()
         onDelete()
         setOpen(false)
     }
@@ -30,7 +32,11 @@ export function DeleteStormDialog({ stormName, onDelete }: DeleteStormDialogProp
         <Dialog open={open} onOpenChange={setOpen}>
             <DialogTrigger asChild>
                 <button
-                    onClick={(e) => { e.stopPropagation(); }}
+                    onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setOpen(true);
+                    }}
                     className="p-1.5 rounded-lg hover:bg-red-500/20 text-zinc-600 hover:text-red-400 transition-colors"
                 >
                     <Trash2 size={16} />
@@ -49,7 +55,10 @@ export function DeleteStormDialog({ stormName, onDelete }: DeleteStormDialogProp
                 <DialogFooter className="flex flex-col sm:flex-row gap-2 mt-4">
                     <Button
                         variant="ghost"
-                        onClick={() => setOpen(false)}
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            setOpen(false);
+                        }}
                         className="flex-1 rounded-xl border border-zinc-900 hover:bg-zinc-900 hover:text-white"
                     >
                         Keep it

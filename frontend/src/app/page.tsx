@@ -7,9 +7,14 @@ import { KnowledgeInspector } from "@/components/inspector/knowledge-inspector"
 import { NewStormDialog } from "@/components/dashboard/new-storm-dialog"
 import { StormCard } from "@/components/dashboard/storm-card"
 import { ScrollArea } from "@/components/ui/scroll-area"
-import { Avatar, AvatarFallback } from "@/components/ui/avatar"
-import { PlusCircle } from "lucide-react"
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
+import { PlusCircle, LogOut, Chrome } from "lucide-react"
+import { Button } from "@/components/ui/button"
 import { EndStormResultDialog } from "@/components/chat/end-storm-dialog"
+import { LogViewer } from "@/components/debug/log-viewer"
+import { supabase } from "@/lib/supabase"
+import { toast } from "sonner"
+import { Session } from "@supabase/supabase-js"
 
 export default function Home() {
   const [view, setView] = useState<"dashboard" | "chat">("dashboard")
@@ -23,17 +28,54 @@ export default function Home() {
   // End Storm states
   const [isEndDialogOpen, setIsEndDialogOpen] = useState(false)
   const [isEnding, setIsEnding] = useState(false)
+  const [isGeneratingBlueprint, setIsGeneratingBlueprint] = useState(false)
+  const [analysis, setAnalysis] = useState<string | null>(null)
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null)
+  const [mutedAgents, setMutedAgents] = useState<string[]>([])
+  const [activeCollaborators, setActiveCollaborators] = useState<string[]>(['Architect', 'Developer', 'Secretary'])
 
-  const USER_ID = "user_01"
+  const [session, setSession] = useState<Session | null>(null)
 
   useEffect(() => {
-    fetchSessions()
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session)
+    })
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session)
+    })
+
+    return () => subscription.unsubscribe()
   }, [])
 
+  useEffect(() => {
+    if (session?.user?.id) {
+      fetchSessions()
+    }
+  }, [session])
+
+  const signInWithGoogle = async () => {
+    await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: {
+        redirectTo: typeof window !== 'undefined' ? window.location.origin : ''
+      }
+    })
+  }
+
+  const signOut = async () => {
+    await supabase.auth.signOut()
+    setView("dashboard")
+    setActiveSession(null)
+    setSessions([])
+  }
+
   const fetchSessions = async () => {
+    if (!session?.user?.id) return
     try {
-      const res = await fetch(`http://localhost:8000/storm/sessions?user_id=${USER_ID}`)
+      const res = await fetch(`http://localhost:8000/storm/sessions`, {
+        headers: { 'Authorization': `Bearer ${session?.access_token}` }
+      })
       if (res.ok) {
         const data = await res.json()
         setSessions(data)
@@ -42,14 +84,21 @@ export default function Home() {
   }
 
   const createStorm = async (name: string, agents: string[]) => {
+    if (!session?.user?.id) return
     setLoading(true)
     try {
-      const res = await fetch(`http://localhost:8000/storm/start?user_id=${USER_ID}&name=${encodeURIComponent(name)}`, {
-        method: "POST"
+      const res = await fetch(`http://localhost:8000/storm/start`, {
+        method: "POST",
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session?.access_token}`
+        },
+        body: JSON.stringify({ name, agents })
       })
       const data = await res.json()
       setActiveSession(data.session_id)
       setDownloadUrl(null)
+      setActiveCollaborators(agents)
       setMessages([{ role: "assistant", sender: "Architect", content: `Storm "${name}" initiated with: ${agents.join(", ")}. How can we help today?` }])
       setRagChunks([])
       setView("chat")
@@ -58,48 +107,146 @@ export default function Home() {
     setLoading(false)
   }
 
-  const selectStorm = async (session: any) => {
-    setActiveSession(session.session_id)
+  const selectStorm = async (selection: any) => {
+    if (!session?.user?.id) return
+    setActiveSession(selection.session_id)
     setDownloadUrl(null)
     try {
-      const res = await fetch(`http://localhost:8000/storm/${session.session_id}/message?user_id=${USER_ID}`)
+      const res = await fetch(`http://localhost:8000/storm/${selection.session_id}/message`, {
+        headers: { 'Authorization': `Bearer ${session?.access_token}` }
+      })
       if (res.ok) {
         const data = await res.json()
         setMessages(data.messages || [])
         setRagChunks(data.rag_chunks || [])
+        if (data.participants) {
+          setActiveCollaborators(data.participants)
+        } else {
+          setActiveCollaborators(['Architect', 'Developer', 'Secretary'])
+        }
+        setView("chat")
+      } else {
+        console.error("Failed to load storm:", res.status)
       }
     } catch (e) {
       console.error("Error loading history:", e)
       setMessages([])
     }
-    setView("chat")
   }
 
   const deleteStorm = async (sessionId: string) => {
+    // Prevent any accidental view changes
+    setView("dashboard")
+
+    // If the deleted storm is the active one, clean it up
+    if (activeSession === sessionId) {
+      setActiveSession(null)
+    }
+
+    // Optimistic update
+    setSessions(prev => prev.filter(s => s.session_id !== sessionId))
+
     try {
       const res = await fetch(`http://localhost:8000/storm/${sessionId}`, {
-        method: "DELETE"
+        method: "DELETE",
+        headers: { 'Authorization': `Bearer ${session?.access_token}` }
       })
       if (res.ok) {
+        toast.success("Storm deleted successfully")
+      } else {
+        toast.error("Failed to delete storm")
         fetchSessions()
       }
-    } catch (e) { console.error(e) }
+    } catch (e) {
+      console.error(e)
+      toast.error("An error occurred while deleting the storm")
+      fetchSessions()
+    }
   }
 
   const sendMessage = async (content: string) => {
     if (!activeSession) return
-    const userMessage = { role: "user", sender: "User", content, timestamp: new Date().toISOString() }
-    setMessages(prev => [...prev, userMessage])
+    const userMessage = {
+      role: "user",
+      sender: "User",
+      content,
+      timestamp: new Date().toISOString(),
+      muted_agents: mutedAgents.map(a => a.toLowerCase())
+    }
+    // Don't add optimistic message locally, specific stream event will confirm it
+    // setMessages(prev => [...prev, userMessage]) (Removed)
     setIsTyping(true)
+
+    // We start with the messages we already have, maybe minus the one we just optimistic-added?
+    // Actually, backend now streams EVERYTHING including the user message first.
+    // But to be safe and responsive, we can keep the optimistic add or better yet:
+    // Let's rely on the backend stream echo for consistency, or keep optimistic and dedup?
+    // The backend yields `{"type": "message", "payload": msg_dict}` for the user msg too.
+
+    // Strategy: Reset messages to current confirmed, let stream fill them in? 
+    // No, that flashes.
+    // Better: Append optimistic, then when stream comes, ignore duplicates or rebuild?
+    // The stream sends NEW events. 
+    // Wait, backend:
+    // `state["messages"].append(msg_dict)` -> send to graph.
+    // `async for event in graph.astream(state)` -> yields updates.
+    // The user message is NOT yielded by graph.astream usually?
+    // Ah, my backend code: `yield json.dumps({"type": "message", "payload": msg_dict})`
+    // So backend ECHOES the user message first.
+    // So we can just clear the optimistic one if we want, or handle dedupe.
+    // Simplest: Don't do optimistic update here, let the stream start immediately.
+
     try {
       const response = await fetch(`http://localhost:8000/storm/${activeSession}/message`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          'Authorization': `Bearer ${session?.access_token}`
+        },
         body: JSON.stringify(userMessage)
       })
-      const data = await response.json()
-      setMessages(data.messages)
-      setRagChunks(data.rag_chunks)
+
+      if (!response.body) return
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ""
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split("\n")
+
+        // Process all lines except the last one (which might be incomplete)
+        buffer = lines.pop() || ""
+
+        for (const line of lines) {
+          if (!line.trim()) continue
+          try {
+            const event = JSON.parse(line)
+            if (event.type === "message") {
+              setMessages(prev => {
+                const exists = prev.some(m =>
+                  m.sender === event.payload.sender &&
+                  m.content === event.payload.content &&
+                  m.timestamp === event.payload.timestamp
+                )
+                if (exists) return prev
+                return [...prev, event.payload]
+              })
+            } else if (event.type === "rag") {
+              setRagChunks(event.payload || [])
+            } else if (event.type === "done") {
+              console.log("Stream complete")
+            } else if (event.type === "error") {
+              console.error("Stream error:", event.payload)
+            }
+          } catch (e) {
+            console.error("Error parsing JSON chunk", e)
+          }
+        }
+      }
     } catch (error) { console.error(error) }
     setIsTyping(false)
   }
@@ -108,15 +255,53 @@ export default function Home() {
     if (!activeSession) return
     setIsEndDialogOpen(true)
     setIsEnding(true)
+    setAnalysis(null)
+    setDownloadUrl(null)
     try {
-      const response = await fetch(`http://localhost:8000/storm/${activeSession}/end`, { method: "POST" })
+      const response = await fetch(`http://localhost:8000/storm/${activeSession}/analysis`, {
+        headers: { 'Authorization': `Bearer ${session?.access_token}` }
+      })
       const data = await response.json()
-      setDownloadUrl(data.download_url)
+      setAnalysis(data.analysis)
     } catch (error) {
       console.error(error)
       setIsEndDialogOpen(false)
     }
     setIsEnding(false)
+  }
+
+  const generateBlueprint = async () => {
+    if (!activeSession) return
+    setIsGeneratingBlueprint(true)
+    try {
+      const response = await fetch(`http://localhost:8000/storm/${activeSession}/blueprint`, {
+        method: "POST",
+        headers: { 'Authorization': `Bearer ${session?.access_token}` }
+      })
+      const data = await response.json()
+      setDownloadUrl(data.download_url)
+    } catch (error) {
+      console.error(error)
+    }
+    setIsGeneratingBlueprint(false)
+  }
+
+  const [isEvolving, setIsEvolving] = useState(false)
+
+  const evolveKnowledge = async (agents: string[]) => {
+    if (!activeSession) return
+    setIsEvolving(true)
+    try {
+      await fetch(`http://localhost:8000/storm/${activeSession}/evolve`, {
+        method: "POST",
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session?.access_token}`
+        },
+        body: JSON.stringify({ agents })
+      })
+    } catch (error) { console.error(error) }
+    setIsEvolving(false)
   }
 
   const handleReturnToDashboard = () => {
@@ -126,23 +311,67 @@ export default function Home() {
     fetchSessions()
   }
 
+  if (!session) {
+    return (
+      <main className="flex flex-col items-center justify-center h-screen w-full bg-black text-white p-6">
+        <div className="max-w-md w-full p-12 bg-zinc-900/30 border border-zinc-900 rounded-[3rem] text-center backdrop-blur-xl">
+          <div className="w-16 h-16 bg-white rounded-2xl flex items-center justify-center mx-auto mb-8 shadow-2xl shadow-white/10">
+            <span className="text-black font-black text-3xl italic">S</span>
+          </div>
+          <h1 className="text-4xl font-bold tracking-tighter mb-4 italic">STORM ENGINE</h1>
+          <p className="text-zinc-500 mb-12 text-sm leading-relaxed uppercase tracking-widest font-bold">Multi-Agent Orchestration</p>
+
+          <Button
+            onClick={signInWithGoogle}
+            className="w-full h-14 bg-white text-black hover:bg-zinc-200 rounded-2xl font-bold flex gap-3 items-center justify-center text-lg transition-all active:scale-95"
+          >
+            <Chrome size={20} />
+            Sign in with Google
+          </Button>
+
+          <p className="mt-8 text-[10px] text-zinc-700 uppercase tracking-[0.2em] font-black">Secure Infrastructure // Powered by Supabase</p>
+        </div>
+      </main>
+    )
+  }
+
   if (view === "chat") {
     return (
       <main className="flex h-screen w-full overflow-hidden bg-black">
-        <Sidebar onNewStorm={() => setView("dashboard")} activeSessionId={activeSession} />
+        <Sidebar
+          onNewStorm={() => setView("dashboard")}
+          activeSessionId={activeSession}
+          mutedAgents={mutedAgents}
+          activeCollaborators={activeCollaborators}
+          onToggleMute={(agent) => {
+            setMutedAgents(prev =>
+              prev.includes(agent) ? prev.filter(a => a !== agent) : [...prev, agent]
+            )
+          }}
+        />
         <ChatInterface
           messages={messages}
           onSendMessage={sendMessage}
           onEndStorm={endStorm}
+          onGenerateBlueprint={generateBlueprint}
           isTyping={isTyping}
+          isGeneratingBlueprint={isGeneratingBlueprint}
+          downloadUrl={downloadUrl}
         />
         <KnowledgeInspector chunks={ragChunks} />
         <EndStormResultDialog
           open={isEndDialogOpen}
           onOpenChange={setIsEndDialogOpen}
           onDashboard={handleReturnToDashboard}
+          analysis={analysis}
           downloadUrl={downloadUrl}
           isProcessing={isEnding}
+          isGeneratingBlueprint={isGeneratingBlueprint}
+          onGenerateBlueprint={generateBlueprint}
+          sessionId={activeSession}
+          onEvolve={evolveKnowledge}
+          isEvolving={isEvolving}
+          activeCollaborators={activeCollaborators}
         />
       </main>
     )
@@ -159,9 +388,22 @@ export default function Home() {
         </div>
         <div className="flex items-center gap-4">
           <NewStormDialog onCreate={createStorm} />
-          <Avatar className="h-10 w-10 border border-zinc-800 bg-zinc-900">
-            <AvatarFallback className="bg-zinc-900 font-bold text-zinc-400">G</AvatarFallback>
-          </Avatar>
+          <div className="flex items-center gap-2 pl-4 border-l border-zinc-900">
+            <Avatar className="h-10 w-10 border border-zinc-800 bg-zinc-900">
+              <AvatarImage src={session.user.user_metadata.avatar_url} />
+              <AvatarFallback className="bg-zinc-900 font-bold text-zinc-400">
+                {session.user.email?.[0].toUpperCase()}
+              </AvatarFallback>
+            </Avatar>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={signOut}
+              className="text-zinc-500 hover:text-red-500 hover:bg-red-500/10 rounded-xl"
+            >
+              <LogOut size={18} />
+            </Button>
+          </div>
         </div>
       </header>
       <section className="mb-12 max-w-7xl mx-auto w-full">
@@ -192,6 +434,7 @@ export default function Home() {
         )}
       </div>
       <footer className="mt-8 text-center text-zinc-700 text-[10px] uppercase tracking-widest font-bold">STORM ENGINE // MULTI-AGENT ORCHESTRATION PLATFORM</footer>
+      <LogViewer />
     </main>
   )
 }

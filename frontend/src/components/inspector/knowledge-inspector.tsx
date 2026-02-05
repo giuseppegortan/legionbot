@@ -6,7 +6,7 @@ interface KnowledgeInspectorProps {
     chunks: any[]
 }
 
-export function KnowledgeInspector({ chunks }: KnowledgeInspectorProps) {
+export function KnowledgeInspector({ chunks = [] }: KnowledgeInspectorProps) {
     return (
         <div className="flex flex-col h-full bg-zinc-950 border-l border-zinc-900 w-80">
             <header className="p-4 border-b border-zinc-900">

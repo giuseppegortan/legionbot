@@ -4,7 +4,7 @@ import { useState, useRef, useEffect } from "react"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
-import { Send, AtSign } from "lucide-react"
+import { Send, AtSign, FileJson, Download } from "lucide-react"
 
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
@@ -17,18 +17,29 @@ import {
     DialogTitle,
     DialogTrigger
 } from "@/components/ui/dialog"
-import { AlertTriangle } from "lucide-react"
+import { AlertTriangle, Loader2 } from "lucide-react"
 
 interface ChatInterfaceProps {
     messages: any[]
     onSendMessage: (content: string) => void
     onEndStorm: () => void
+    onGenerateBlueprint: () => void
     isTyping?: boolean
+    isGeneratingBlueprint?: boolean
+    downloadUrl?: string | null
 }
 
-export function ChatInterface({ messages, onSendMessage, onEndStorm, isTyping }: ChatInterfaceProps) {
+export function ChatInterface({
+    messages = [],
+    onSendMessage,
+    onEndStorm,
+    onGenerateBlueprint,
+    isTyping,
+    isGeneratingBlueprint,
+    downloadUrl
+}: ChatInterfaceProps) {
     const [input, setInput] = useState("")
-    const [isConfirmOpen, setIsConfirmOpen] = useState(false)
+    const [isConfirmOpen, setConfirmOpen] = useState(false)
     const scrollBottomRef = useRef<HTMLDivElement>(null)
 
     useEffect(() => {
@@ -46,7 +57,34 @@ export function ChatInterface({ messages, onSendMessage, onEndStorm, isTyping }:
             <header className="p-4 border-b border-zinc-900 flex justify-between items-center shrink-0">
                 <h2 className="font-semibold text-lg tracking-tight">Project Storm</h2>
                 <div className="flex gap-2">
-                    <Dialog open={isConfirmOpen} onOpenChange={setIsConfirmOpen}>
+                    {!downloadUrl ? (
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={onGenerateBlueprint}
+                            disabled={isGeneratingBlueprint}
+                            className="text-zinc-400 hover:text-zinc-100 rounded-xl border border-zinc-900"
+                        >
+                            {isGeneratingBlueprint ? (
+                                <Loader2 className="animate-spin mr-2" size={16} />
+                            ) : (
+                                <FileJson className="mr-2" size={16} />
+                            )}
+                            Blueprint
+                        </Button>
+                    ) : (
+                        <Button
+                            asChild
+                            size="sm"
+                            className="bg-green-600/20 text-green-400 hover:bg-green-600/30 border border-green-500/30 rounded-xl"
+                        >
+                            <a href={`http://localhost:8000${downloadUrl}`} target="_blank" rel="noopener noreferrer">
+                                <Download size={16} className="mr-2" />
+                                Download Zip
+                            </a>
+                        </Button>
+                    )}
+                    <Dialog open={isConfirmOpen} onOpenChange={setConfirmOpen}>
                         <DialogTrigger asChild>
                             <Button
                                 variant="outline"
@@ -69,7 +107,7 @@ export function ChatInterface({ messages, onSendMessage, onEndStorm, isTyping }:
                             <DialogFooter className="flex flex-col sm:flex-row gap-2 mt-4">
                                 <Button
                                     variant="ghost"
-                                    onClick={() => setIsConfirmOpen(false)}
+                                    onClick={() => setConfirmOpen(false)}
                                     className="flex-1 rounded-xl border border-zinc-900 hover:bg-zinc-900"
                                 >
                                     Cancel
@@ -77,7 +115,7 @@ export function ChatInterface({ messages, onSendMessage, onEndStorm, isTyping }:
                                 <Button
                                     variant="destructive"
                                     onClick={() => {
-                                        setIsConfirmOpen(false)
+                                        setConfirmOpen(false)
                                         onEndStorm()
                                     }}
                                     className="flex-1 rounded-xl bg-red-600 hover:bg-red-700 font-bold"
@@ -92,7 +130,7 @@ export function ChatInterface({ messages, onSendMessage, onEndStorm, isTyping }:
 
             <div className="flex-1 overflow-y-auto p-6 pb-40">
                 <div className="max-w-3xl mx-auto space-y-8">
-                    {messages.map((m, i) => (
+                    {(messages || []).map((m, i) => (
                         <div key={i} className={`flex flex-col ${m.role === 'user' ? 'items-end' : 'items-start'}`}>
                             <span className="text-xs text-zinc-500 mb-1 px-1">{m.sender}</span>
                             <div className={`max-w-[90%] rounded-2xl p-4 prose prose-invert prose-sm ${m.role === 'user'
